@@ -1,0 +1,732 @@
+From archamba@ERE.UMontreal.CA Sun Mar 13 11:00:22 CST 1994
+X-Found: https://ftplike.com/browser/os9archive.rtsi.com/OS9/OS9_6X09/PROG/
+Article: 40 of comp.sys.m6809
+Newsgroups: comp.sys.m6809
+Path: sandv!vpnet!tellab5!laidbak!psinntp!psinntp!newsserver.pixel.kodak.com!rpi!utcsri!newsflash.concordia.ca!CC.UMontreal.CA!archamba
+From: archamba@ERE.UMontreal.CA (Archambault Benoit)
+Subject: Re: 6809 math package
+Message-ID: <CMI5tw.A70@cc.umontreal.ca>
+Sender: news@cc.umontreal.ca (Administration de Cnews)
+Organization: Universite de Montreal
+Date: Fri, 11 Mar 1994 13:37:06 GMT
+Lines: 717
+
+
+ 
+                                    F P O 9
+
+                     Floating point routines for the 6809
+
+                   Written for Motorola by Joel Boney, 1980
+              Released into the public domain by Motorola in 1988
+         Docs and apps for Tandy Color Computer by Rich Kottke, 1989
+
+
+
+The 6839 floating point ROM was never available from Motorola, but I recently
+noticed that the code from the ROM was available on Motorola's PD software BBS
+so I downloaded it.  It consists of an OS-9 module called FPO9 that contains a
+full software implementation of the IEEE Proposed Standard for Binary Floating
+Point Arithmetic Draft 8.0.  This document presents what you need to know to
+use the subroutines in FPO9; much of this is paraphrased from the old
+"Motorola 8-bit Microprocessors and Peripherals" databook, which had a brown
+cover, under the heading "6839 Floating Point ROM."  If you can find a copy
+of this databook it will help you use FPO9, but it has been superceeded by a
+new edition (blue cover) which doesn't have the 6839 in it.
+
+                           FLOATING POINT FORMATS
+
+    FPO9 supports three types of floating point numbers, two integer types
+and BCD strings.
+
+SINGLE FORMAT
+                 4 bytes long
+      ---------------------------------------
+      |sign| exponent |     significand     |
+      ---------------------------------------
+      1 bit   8 bits         23 bits
+
+    The exponent is biased by 127, so 2^0 is 127, 2^2 is 129 and 2^-2 is 125.
+Significand is sign/magnitude vice 2's complement.
+
+Examples:
+  +1.0 = 1.0 * 2^0 = $3F 80 00 00
+  +3.0 = 1.5 * 2^1 = $40 40 00 00
+  -1.0 =-1.0 * 2^0 = $BF 80 00 00
+
+DOUBLE FORMAT
+                 8 bytes long
+      ---------------------------------------
+      |sign| exponent |     significand     |
+      ---------------------------------------
+      1 bit  11 bits         52 bits
+
+    The exponent is biased by 1023, otherwise similar to single format.
+
+Examples:
+  +7.0 = 1.75 * 2^2 =  $40 1C 00 00 00 00 00 00
+ -30.0 =-1.875 * 2^4 = $C0 3E 00 00 00 00 00 00
+  +0.25= 1.0 * 2^-2 =  $3F D0 00 00 00 00 00 00
+
+EXTENDED FORMAT
+                10 bytes long
+      ---------------------------------------
+      |sign| exponent |1    significand     |
+      ---------------------------------------
+      1 bit  15 bits         64 bits
+
+    This format is used internally but can be used if extra precision is
+needed at an intermediate step in a calculation.  The "1.0" is explicitly
+present in the significand and the exponent contains no bias and is in 2's
+complement form.
+
+Examples:
+  0.5 = 1.0 * 2^-1 = $7F FF 80 00 00 00 00 00 00 00
+ -1.0 =-1.0 * 2^0  = $80 00 80 00 00 00 00 00 00 00
+384.0 = 1.5 * 2^8  = $00 08 C0 00 00 00 00 00 00 00
+
+BCD STRINGS
+                          26 bytes long
+
+         0  1                    4  5   6                    24  25
+      ---------------------------------------------------------------
+      | se | 4 digit BCD exponent | sf | 19 digit BCD fraction |  p |
+      ---------------------------------------------------------------
+      1 byte      4 bytes         1 byte       19 bytes        1 byte
+
+se = sign of exponent. $00 = positive, $0F = negative
+sf = sign of fraction. $00 = positive, $0F = negative
+ p = number of fraction digits to the right of decimal point
+
+All BCD digits are unpacked and right justified, like this:
+
+      7       4 3       0
+     ---------------------
+     | 0 0 0 0 |   0-9   |
+     ---------------------
+
+The most significant BCD digits will be in lower memory (the normal Motorola
+convention).  To convert to ASCII, one need only add $30 (ASCII 0) to each
+digit.
+
+INTEGERS
+
+    FPO9 supports both short (16 bit) and long (32 bit) integers.
+
+SPECIAL VALUES
+
+    +0, -0, +infinity, -infinity, very small (near zero), and in some cases
+unnormalized numbers are supported.  Also supported are Not-A-Numbers (NANs).
+Details of these special values are given in a later section.
+
+                            SUPPORTED OPERATIONS
+
+    FPO9 supports the following operations.  On any call to FPO9 the one byte
+opcode immediately follows the JSR to FPO9.
+
+MNEMONIC                               DESCRIPTION
+
+FADD   Add arg1 to arg2 and store the result.
+
+FSUB   Subtract arg2 from arg1 and store the result.
+
+FMUL   Multiply arg1 by arg2 and store the result.
+
+FDIV   Divide arg1 by arg2 and store the result.
+
+FREM   Take the remainder of arg1 divided by arg2 and store the result.  The
+       remainder is biased to lie in the range -arg2/2 < rem < +arg2/2.
+
+FCMP   Compare arg1 with arg2 and set condition codes to the result of the
+       compare.  Arg1 and arg2 can be of different precisions.
+
+FTCMP  Compare arg1 with arg2 and set condition codes to the result of the
+       compare.  In addition, trap if an unordered exception occurs regardless
+       of the state of the UNOR bit in the trap enable byte of the fpcb.
+
+FPCMP  A predicate compare; this means compare arg1 with arg2 and affirm or
+       disaffirm the input predicate (e.g. 'is arg1=arg2' or 'is arg1>arg2').
+FTPCMP A trapping predicate compare, same as FPCMP except it will trap on an
+       unordered exception regardless of the state of the UNOR bit in the trap
+       enable byte of the fpcb.
+
+FSQRT  Returns the square root of arg2 in the result.
+
+FINT   Returns the integer part of arg2 in the result.  The result is still a
+       floating point number: FINT(54.335623424) = 54.000000.
+
+FFIXS  Convert arg2 to a short (16 bit) integer.
+
+FFIXD  Convert arg2 to a long (32 bit) integer.
+
+FFLTS  Convert a short (16 bit) integer to a floating point result.
+
+FFLTD  Convert a long (32 bit) integer to a floating point result.
+
+BINDEC Convert a floating point number to a BCD string.
+
+DECBIN Convert a BCD string to a floating point number.
+
+FABS   Return the absolute value of arg2 in the result.
+
+FNEG   Return the negative of arg2 in the result.
+
+FMOV   Move (or convert) arg1 -> arg2.  This function is useful for changing
+       precisions (e.g. single to double)  with full exception processing for
+       possible overflow and underflow.
+
+
+    All routines, except FMOV and the compares, accept arguments of the same
+precision and generate a result with the same precision.  For FMOV and the
+compares,  the sizes of the arguments are passed in a parameter word.
+
+
+                            MODES OF OPERATION
+
+
+    FPO9 supports all of the modes required or suggested by the IEEE standard.
+The selection bits are discussed later.
+
+ROUNDING MODES
+
+    1. Round to nearest.        (RN)
+    2. Round toward zero.       (RZ)
+    3. Round toward + infinity. (RP)
+    4. Round toward - infinity. (RM)
+
+Round to nearest will be used in most cases.  FORTRAN needs round to zero and
+interval arithmetic use RP and RM modes.
+
+NO DOUBLE ROUNDING
+
+    No result will undergo more than one rounding error.
+
+INFINITY CLOSURE MODES
+
+Affine closure:  in affine closure,
+
+    - inifinity < every finite number < + infinity
+
+Thus, infinity is a member of the real number system just like any other
+signed quantity.
+
+Projective closure: in prjective closure,
+
+   - infinity = infinity = + infinity
+
+Any comparisons between real numbers and infinity other than = and <> (not
+equal to) are invalid.
+
+NORMALIZE MODE
+
+    The purpose of the normalize mode is to prevent unnormalized results from
+being generated, which can otherwise happen.  Such an unnormalized result
+arises when a denormalized operand is operated on such that its fraction
+remains not normalized but its exponent is no longer at its original minimum
+value.  By transforming denormalized operands to normalized, internal form
+upon entering each operation, unnormalized results are guarenteed not to
+occur.
+    Thus, when operating in this mode the user can be assured that no attempt
+will be made to return an unnormalized value to a single or double
+destination.  A bit in the control byte of the fpcb selects whether or not
+this mode is in effect.  This mode is forced whenever the round mode is
+either round towards + infinity or - infinity.  Unnormalized numbers entering
+an operation are not affected by this mode, only denormalized ones are.
+Unnormalized and denormalized operands are discussed in a later section.
+
+                                EXCEPTIONS
+
+    Seven types of exceptions are recognized by FPO9:
+
+1. Invalid operation - A general exception when a sensible result cannot be
+   returned and the exception does not fit into any other category.
+
+2. Underflow - result is too small to fit in specified precision.
+
+3. Overflow - result is too large to fit in specified precision.
+
+4. Division by zero - obvious.
+
+5. Inexact result - result of an operation was not exact so it was rounded to
+                    the required precision before being returned.
+
+6. Integer overflow - result of FIX would not fit into an integer.
+
+7. Comparison of unordered values - attempting to compare a NAN or infinity.
+
+    For each exception the user can specify whether FPO9 should 1) jump to a
+user defined exception trap routine or 2) deliver a default result and
+continue with execution.  Normally the default result is sufficient and a
+trap routine need not be written.  A status bit will be set in the status
+byte of the fpcb.  Whether or not to trap or continue is made by bits in the
+trap byte of the fpcb.  See the section on the fpcb for more details.
+
+    After a trap, a pointer is supplied which points to an area on the stack
+with this diagnostic info:
+
+1. What caused the trap (underflow, etc.)
+2. Where in the caller's program.
+3. Opcode.
+4. The input operands.
+5. The default result in internal format.
+
+If more than one trap happens in the same operation, only one is taken
+according to this precedence:
+
+1. Invalid operator
+2. Overflow
+3. Underflow
+4. Division by zero
+5. Unordered comparison
+6. Integer overflow
+7. Inexact result
+
+The user supplied trap routine can 1) fix the result, 2) do nothing and allow
+the default result to be returned or 3) abort execution.
+
+                              USER INTERFACE
+
+    FPO9 has two types of calls: stack and register.  For register calls the
+user loads the registers with addresses of arg1, arg2, result etc.  For stack
+calls, the operands are pushed on the stack.  FPO9 will pop the operands,
+compute the result and put result on the stack (this is usefull when
+evaluating rpn expressions).
+
+Register call example:
+
+    pshs    u          save u
+    ldx     regent     x gets register entry address (compute ahead of time)
+    pshs    x          save entry adx on stack
+    leay    arg2,u     y -> arg2
+    leax    fpcb,u     d -> fpcb
+    tfr     x,d
+    leax    result,u   x -> result
+    leau    arg1,u     u -> arg1
+    jsr     [,s++]     jsr FPO9 and clean stack
+    fcb     fadd       opcode for fadd. FPO9 inc's PC past this
+    puls    u          restore u
+     .
+     .
+
+Stack call example:
+
+    push    argument1  push arg1 onto stack
+    push    argument2  push arg2 onto stack
+    push    fpcbptr    push ptr to fpcb
+    ldx     stkcall    x -> FPO9 stack call routine
+    jsr     ,x         jsr to FPO9
+    fcb     fmul       opcode for fmul. FPO9 inc's PC past this
+     .
+     .
+
+STACK REQUIREMENTS
+
+    Register calls:  150 bytes
+    Stack calls:     185 bytes
+
+FLOATING POINT CONTROL BLOCK (fpcb)
+
+    The caller must supply a pointer to the fpcb every call.  It contains
+status information and serves to pass info between FPO9 and the user.
+
+                    -----------------------------
+                    |       control byte        |0
+                    -----------------------------
+                    |     trap enable byte      |1
+                    -----------------------------
+                    |        status byte        |2
+                    -----------------------------
+                    |   secondary status byte   |3
+                    -----------------------------
+                    |       address of          |4
+                    |      trap routine         |5
+                    -----------------------------
+
+CONTROL BYTE - Written by user.  Controls FPO9 operation.  If user sets to
+               zero, all of the IEEE defaults are used.
+
+               7     6     5     4     3     2     1     0
+            -------------------------------------------------
+            |    precision    |  x  | NRM |round mode | A/P |
+            -------------------------------------------------
+
+Bit 0:    Closure (A/P) byte.
+          1 = affine closure
+          0 = projective closure
+
+Bits 1-2: Round mode
+          11 = round to minus infinity (RM)
+          10 = round to plus infinity (RP)
+          01 = round to zero (RZ)
+          00 = round to nearest (RN)
+
+Bit 3:    Normalize (NRM) bit
+          1 = normalize denormalized numbers while in internal format before
+              using.  Precludes formation of unnormalized numbers.  NOTE:
+              this mode is automatically used if rounding mode is RM or RP.
+          0 = do not normalize denormalized numbers.
+
+Bit 4:    Reserved/unused
+
+Bits 5-7: Precision.
+          111 = reserved
+          110 = reserved
+          101 = reserved
+          100 = extended - round result to double
+          011 = extended - round result to single
+          010 = extended - no forced rounding
+          001 = double
+          000 = single
+
+STATUS BYTE - Written by FPO9 to indicate any errors that have occured.  Bits
+              must be cleared by the user, FPO9 will never clear a bit once
+              it has been set.
+
+               7     6     5     4     3     2     1     0
+            -------------------------------------------------
+            |  x  | INX | IOV |  UN |  DZ | UNF | OVF | IOP |
+            -------------------------------------------------
+
+Bit 7: reserved
+Bit 6: inexact result
+Bit 5: integer overflow
+Bit 4: unordered
+Bit 3: division by zero
+Bit 2: underflow
+Bit 1: overfloww
+Bit 0: invalid operation
+
+TRAP ENABLE BYTE - Same as status byte; if a bit is set to 1, the user
+                   defined trap routine is entered whenever that error
+                   occurs.  If all bits are 0, no error trapping is done.
+
+SECONDARY STATUS BYTE (SS) - FPO9 places the exact type of error in this byte
+                             whenever an "invalid operation error" (IOP)
+                             happens.
+
+               7     6     5     4     3     2     1     0
+            -------------------------------------------------
+            |  x  |  x  |  x  |    invalid operation type   |
+            -------------------------------------------------
+
+Bits 0-4: invalid operation type
+          0  = no IOP error
+          1  = square root of a negative number, infinity in a projective
+               mode or not a normalized number.
+          2  = tried to convert a NAN to an integer
+          3  = (plus infinity) + (neg infinity) in affine mode
+          4  = in division: 0/0, infinity/infinity or divisor is not
+               normalized and the dividend is not zero and is finite.
+          5  = one of the input arguments was a trapping NAN
+          6  = unordered values compared via predicate other than = or <>
+          7  = k out of range for BINDEC or p out of range for DECBIN
+          8  = projective closure use of +/- infinity
+          9  = 0 x infinity
+          10 = in REM arg2 is zero or not normalized or arg1 is infinite
+          11 = reserved
+          12 = reserved
+          13 = BINDEC integer too big to convert
+          14 = DECBIN cannot represent input string
+          15 = tried to MOV a single denormalized number to a double
+               destination
+          16 = tried to return an unnormalized number to a single or double
+               (invalid result)
+          17 = division by zero with divide by zero trap disabled
+
+TRAP VECTOR - If a trap occurs, FPO9 will JUMP indirectly to the trap address
+              in the fpcb.  Accumulator A will contain the trap type; if more
+              than one trap has occured, the higher priority one is returned
+              (0 = highest priority).  The trap types are:
+ 
+              0 = invalid operation
+              1 = overflow
+              2 = underflow
+              3 = divide by zero
+              4 = unnormalized
+              5 = integer overflow
+              6 = inexact result
+
+              SPECIAL VALUES (SINGLE AND DOUBLE FORMAT)
+
+    Generally, when operated on the special values will give predictable
+results.
+
+ZERO
+
+    Zero is represented as a zero exponent and zero fraction with a
+significant sign (+0 or -0).
+
+               -----------------------------------------
+               | s |     0     |          0            |
+               -----------------------------------------
+
+INFINITY
+
+    Infinity has a maximum exponent and a zero fraction.  The sign
+differentiates between plus infinity and minus infinity.
+
+               -----------------------------------------
+               | s |111 ... 111|          0            |
+               -----------------------------------------
+
+DENORMALIZED (SMALL NUMBERS)
+
+    The exponent is always zero and is interpreted as -126 (single) or -1022
+(double).  The fraction is non-zero.
+
+               -----------------------------------------
+               | s |     0     |       non-zero        |
+               -----------------------------------------
+
+Examples:
+Single:
+ 1.0 * 2^-128 = 0.25 * 2^126 = $00 20 00 00
+Double:
+ 1.0 * 2^-1025 = .125 * 2^1022 = $00 02 00 00 00 00 00 00
+
+NOT A NUMBER (NAN)
+
+    NANs are used by higher level languages to indicate that a number has
+been defined but never assigned a value.  They are also used by FPO9 to
+indicate that an operation could not return a valid result.
+    NANs have the largest exponent and a non-zero fraction.
+
+             -------------------------------------------------------
+             | d | 111 ... 111 | t | operation address | 00 ... 00 |
+             -------------------------------------------------------
+
+d: 0 = This NAN has never entered into an operation with another NAN
+   1 = This NAN has entered into an operation with another NAN
+
+t: 0 = This NAN will not necessarily cause an invalid operation trap when
+       operated on.
+   1 = This NAN will cause an invalid operation trap when operated on.  (A
+       trapping NAN).
+
+operation address: (16 bits long) the address of the instruction immediately
+following the call to FPO9 that caused the NAN to be created.
+
+                    SPECIAL VALUES (EXTENDED FORMAT)
+
+ZERO
+    Has smallest (unbiased) exponent and zero fraction.
+
+               -----------------------------------------
+               | s |100 ... 000|          0            |
+               -----------------------------------------
+
+
+INFINITY
+    Maximum (unbiased) exponent and zero fraction.
+
+               -----------------------------------------
+               | s |011 ... 111|          0            |
+               -----------------------------------------
+
+DENORMALIZED NUMBERS
+    Smallest (unbiased) exponent and non-zero fraction.
+
+               -----------------------------------------
+               | s |100 ... 000|0.     non-zero        |
+               -----------------------------------------
+
+
+Denormalized extended numbers have an exponent of -16384 but are expressed as
+ 0.xxxx * 2^-16383
+
+Example:
+
+ 1.0 * 2^-16387 = 0.625 * 2^-16383 = $40 00 08 00 00 00 00 00 00 00
+
+NANs
+    Largest (unbiased) exponent and non-zero fractions.
+
+               -------------------------------------------------------
+               | d |011 ... 111| 0 | t | operation address |000...000|
+               -------------------------------------------------------
+
+Where d, t and operation address are the same as single or double NANs.
+
+UNNORMALIZED NUMBERS
+    Occur only in extended or internal formats.  They have an exponent >
+minimum and the leading fraction bit is 0.  They can only be created when
+denormalized numbers (single or double) are represented in extended or
+internal formats.
+
+               -------------------------------------
+               | s | > 100...000 | 0.   fraction   |
+               -------------------------------------
+
+Example:
+.0625 * 2^2 = $00 02 08 00 00 00 00 00 00 00
+
+
+
+
+
+            FPO9 CALLING SEQUENCE AND OPCODE REFERENCE TABLE
+------------------------------------------------------------------------------
+|Function|Opcode|  Register entry conditions   | Stack entry conditions      |
+------------------------------------------------------------------------------
+| FADD   | $00  | U -> arg1                    | push arg1                   |
+| FSUB   | $02  | Y -> arg2                    | push arg2                   |
+| FMUL   | $04  | D -> fpcb                    | push ptr to fpcb            |
+| FDIV   | $06  | X -> result                  | call FPO9                   |
+|        |      |                              | pull result                 |
+------------------------------------------------------------------------------
+| FREM   | $08  | Y -> arg                     | push arg                    |
+| FSQRT  | $12  | D -> fpcb                    | push ptr to fpcb            |
+| FINT   | $14  | X -> result                  | call FPO9                   |
+| FFIXS  | $16  |                              | pull result                 |
+| FFIXD  | $18  |                              |                             |
+| FABS   | $1E  |                              |                             |
+| FNEG   | $20  |                              |                             |
+| FFLTS  | $24  |                              |                             |
+| FFLTD  | $26  |                              |                             |
+------------------------------------------------------------------------------
+| FCMP   | $0A  | U -> arg1                    | push arg1                   |
+| FTCMP  | $0C  | Y -> arg2                    | push arg2                   |
+| FPCMP  | $0E  | D -> fpcb                    | push parameter word         |
+| FTPCMP | $10  | X =  parameter word          | push ptr to fpcb            |
+|        |      | result is returned in the CC | call FPO9                   |
+|        |      | register.  For predicate     | pull result (if pred. cmp)  |
+|        |      | compares, Z is set if affirm | result is returned in the CC|
+|        |      | and clear if disaffirm.      | register. For pred. cmps a 1|
+|        |      |                              | byte result is on top of the|
+|        |      |                              | stack: 0 if affirm, $FF if  |
+|        |      |                              | disaffirm                   |
+------------------------------------------------------------------------------
+| FMOV   | $1A  | U =  precision parameter word| push arg                    |
+|        |      | Y -> argument                | push precision param word   |
+|        |      | D -> fpcb                    | push ptr to fpcb            |
+|        |      | X -> result                  | call FPO9                   |
+|        |      |                              | pull result                 |
+------------------------------------------------------------------------------
+| BINDEC | $1C  | U =  k (# digits in result)  | push arg                    |
+|        |      | Y -> argument                | push k                      |
+|        |      | D -> fpcb                    | push ptr to fpcb            |
+|        |      | X -> decimal result          | call FPO9                   |
+|        |      |                              | pull result                 |
+------------------------------------------------------------------------------
+| DECBIN | $22  | U -> decimal string          | push ptr to BCD string      |
+|        |      | D -> FPCB                    | push addr of fpcb           |
+|        |      | X -> binary result           | call FPO9                   |
+|        |      |                              | pull result                 |
+------------------------------------------------------------------------------
+
+                           PARAMETER WORDS
+
+
+For predicate compares, X contains a parameter word with the condition to be
+affirmed or disaffirmed.  The predicate bits in X are as follows:
+
+Bit 0    : unordered bit
+Bit 1    : less than bit
+Bit 2    : equal to bit
+Bit 3    : greater than bit
+Bit 4    : not equal bit
+Bits 5-15: not used
+
+greater than or equal to = bit 3 + bit 2
+less than or equal to = bit 2 + bit 1
+
+
+For moves, U contains a parameter word describing the size of the source and
+destination arguments.  The bits are as follows, where the size is as defined
+in the fpcb control byte
+Bits 0-2  : Destination size
+Bits 3-7  : unused
+Bits 8-10 : Source size
+Bits 11-15: unused
+
+                             ENTERING FPO9
+
+FPO9 is an OS-9 Multi-Module, which some people may have heard of.  It's the
+only one I've ever seen and the format is not is the Tandy reference manual.
+By using some detective work, I've re-created the format here:
+
+OS-9 Multimodule Format:
+               ----------------------------------------------
+               00 |       Sync  bytes - $87CD               |
+               01 |                                         |
+               ----------------------------------------------
+               02 |       Module  size (bytes)              |
+               03 |                                         |
+               ----------------------------------------------
+               04 |       Module name offset                |
+               05 |                                         |
+               ----------------------------------------------
+               06 |      Type          |      Language      |
+               ----------------------------------------------
+               07 |    Attributes      |      Revision      |
+               ----------------------------------------------
+               08 |            Header parity                |
+               ----------------------------------------------
+               09 |     Number of entries in table          |
+               ----------------------------------------------
+               0A |                                         |
+                . |     Entry table(s). See below           |
+                . |                                         |
+               ----------------------------------------------
+
+Entry table: for each entry of the multimodule, the table contains
+the following:
+               ----------------------------------------------
+               | Entry name, last character has bit 8 set   |
+               |                                            |
+               ----------------------------------------------
+               | Entry execution offset (2 bytes)           |
+               |                                            |
+               ----------------------------------------------
+               | Amount of permanent storage required by    |
+               | entry (2 bytes)                            |
+               ----------------------------------------------
+               | Amount of stack space required by entry    |
+               | (2 bytes)                                  |
+               ----------------------------------------------
+
+
+Now that the format of the module is known, the first step in using FPO9 is
+computing the entry address for the FPO9 routine (reg or stak) that you
+wish to use.  From DUMPing the contents of the module, I have figured out the
+respective offsets for reg and stak and offer this method to compute their
+entry points:
+
+fpname fcc     /FPO9/      name of FPO9
+       fcb     $0D
+
+fplink lda     #$B1        type/revs of FPO9
+       leax    fpname,pcr  x -> fpname
+       pshs    u           save u
+       os9     F$LINK      link to FPO9; u -> FPO9 start
+       bcs     error       branch if error
+
+       leax    $3D,u       compute entry point for register calls
+       stx     regcall
+
+       leax    $3F,u       compute entry point for stack calls
+       stx     stkcall
+
+                              SOME FINAL NOTES
+
+The use of this module is up to you.  I have written a few sample programs,
+including one that computes exponentials in the range (-0.2 ... +0.2), and a
+few utilities for use with fpo9.  If you want to ask questions, you may drop
+me a letter at
+
+    Richard Kottke, Jr
+    Rt. 3 Box 431
+    Crivitz, WI 54114
+
+or send me E-mail on Delphi (RICHKOTTKE).  I can't promise to answer all
+questions because I didn't write this thing.  Joel Boney did and I have no
+idea who he is or where he is or if he's even still working at Motorola.  I
+would like to thank Joel for writing FPO9 and Motorola for releasing it into
+the Public Domain.  To all of you out there, Good Luck!
+-- 
+"Ribbit!"         Benoit Archambault                    Universite de Montreal 
+  ` /\/@\/@\/\          archamba@ERE.UMontreal.CA       C.P. 6128, Succ. A 
+   _\ \ -  / /_                                         Montreal, Quebec 
+                                                        H3C 3J6
+
+
